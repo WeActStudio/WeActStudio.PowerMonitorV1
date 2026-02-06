@@ -1,5 +1,5 @@
 * [English version](./README.md)
-# WeActStudio.PowerMonitorMiniV1
+# WeActStudio.PowerMonitorV1
 ![display](Images/zh/1.png)
 ## 误差表
 ![display](Images/error.png)
