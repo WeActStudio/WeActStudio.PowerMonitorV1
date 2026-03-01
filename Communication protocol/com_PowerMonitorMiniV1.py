@@ -17,6 +17,8 @@ class Command(IntEnum):
     CMD_PD_PDO_FIX = 0x08
     CMD_PD_PDO_PPS = 0x09
     CMD_PD_PDO = 0x0A
+    CMD_PD_PDO_AVS = 0x0B
+    CMD_PD_PDO_NUM= 0x0C
     CMD_SYSTEM_RESET = 0x40
     CMD_SYSTEM_VERSION = 0x42
     CMD_SYSTEM_SERIAL_NUM = 0x43
@@ -38,6 +40,8 @@ class Command(IntEnum):
             Command.CMD_PD_PDO_FIX: 0,
             Command.CMD_PD_PDO_PPS: 0,
             Command.CMD_PD_PDO: 5,
+            Command.CMD_PD_PDO_AVS: 0,
+            Command.CMD_PD_PDO_NUM: 5,
             Command.CMD_SYSTEM_LCD_PANEL_TYPE: 3,
             Command.CMD_SYSTEM_CURRENT_RSHUNT: 3,
             Command.CMD_SYSTEM_VERSION: 0,
@@ -92,7 +96,8 @@ class com_PowerMonitorMiniV1:
                             Command.CMD_SYSTEM_VERSION,
                             Command.CMD_SYSTEM_SERIAL_NUM,
                             Command.CMD_PD_PDO_FIX,
-                            Command.CMD_PD_PDO_PPS
+                            Command.CMD_PD_PDO_PPS,
+                            Command.CMD_PD_PDO_AVS
                         ]:
                             if len(buffer) > 1 and buffer[1] == len(buffer) - 3:
                                 end_pos = 3 + buffer[1]
@@ -501,8 +506,8 @@ class com_PowerMonitorMiniV1:
             {
                 "count": 2,
                 "ppsdata": [
-                    {"voltage": 5000, "current": 3000},
-                    {"voltage": 9000, "current": 2000}
+                    {"minvoltage": 5000, "maxvoltage": 9000, "maxcurrent": 3000},
+                    {"minvoltage": 9000, "maxvoltage": 15000, "maxcurrent": 2000}
                 ]
             }
         """
@@ -554,6 +559,103 @@ class com_PowerMonitorMiniV1:
             })
         
         return result
+    
+    def pd_pdo_avs_get(self):
+        """
+        获取PDO AVS数据
+        Get PDO AVS data
+        
+        Returns:
+            dict: 包含count和avsdata列表的数据结构
+            Example:
+            {
+                "count": 2,
+                "avsdata": [
+                    {"minvoltage": 15000, "maxvoltage": 28000, "maxpower": 240},
+                    {"minvoltage": 15000, "maxvoltage": 36000, "maxpower": 240}
+                ]
+            }
+        """
+        s = bytearray()
+        s.append(Command.CMD_PD_PDO_AVS | Command.CMD_READ)
+
+        # Add CRC if enabled
+        if self._use_crc8:
+            crc = self.calculate_crc8(s)
+            s.append(crc)
+        else:
+            s.append(Command.CMD_END)
+
+        self._read_ok_event.clear()
+        self.send_command(s)
+        if not self._read_ok_event.wait(timeout=1.0):  # 等待1秒超时
+            print("等待响应超时 Timeout waiting for response")
+            return None
+        
+        # 确保_read_result有足够的数据
+        if len(self._read_result) < 1:
+            print("PDO数据格式错误: 数据长度不足 PDO data format error: insufficient data length")
+            return None
+        
+        # 解析数据
+        result = {"count": 0, "avsdata": []}
+        
+        result["count"] = len(self._read_result)//6
+
+        # 解析ppsdata数组
+        for i in range(result["count"]):
+            # 每个avsdata元素占用4字节
+            # minvoltage: 2字节，小端 2byte little endian
+            # maxvoltage: 2字节，小端 2byte little endian
+            # maxpower: 2字节，小端 2byte little endian
+            offset = i*6
+            
+            # 解析电压 (mV)
+            minvoltage = struct.unpack("H", self._read_result[offset:offset+2])[0]
+            maxvoltage = struct.unpack("H", self._read_result[offset+2:offset+4])[0]
+            
+            # 解析功率 (W)
+            maxpower = struct.unpack("H", self._read_result[offset+4:offset+6])[0]
+            
+            result["avsdata"].append({
+                "minvoltage": minvoltage,
+                "maxvoltage": maxvoltage,
+                "maxpower": maxpower
+            })
+        
+        return result
+
+    def pd_pdo_num(self):
+        """
+        获取PDO数量
+        Get PDO number
+        """
+        s = bytearray()
+        s.append(Command.CMD_PD_PDO_NUM | Command.CMD_READ)
+
+        # Add CRC if enabled
+        if self._use_crc8:
+            crc = self.calculate_crc8(s)
+            s.append(crc)
+        else:
+            s.append(Command.CMD_END)
+
+        self._read_ok_event.clear()
+        self.send_command(s)
+        if not self._read_ok_event.wait(timeout=1.0):  # 等待1秒超时
+            print("等待响应超时 Timeout waiting for response")
+            return None
+        
+        # 确保_read_result有足够的数据
+        if len(self._read_result) != 3:
+            print("PDO数据格式错误: 数据长度不足 PDO data format error: insufficient data length")
+            return None
+        
+        fixed_num = int(self._read_result[0])
+        pps_num = int(self._read_result[1])
+        avs_num = int(self._read_result[2])
+        
+        return fixed_num, pps_num, avs_num
     
     def pd_pdo_now(self):
         """
@@ -691,11 +793,17 @@ if __name__ == "__main__":
     print("Input_type:",INPUT_TYPE.get(input_type, "Unknown"))
 
     if INPUT_TYPE.get(input_type) == "PD":
+        fixed_num, pps_num, avs_num = c.pd_pdo_num()
+        print("fixed_num:",fixed_num,"pps_num:",pps_num,"avs_num:",avs_num)
+
         pd_pdo_fix = c.pd_pdo_fix_get()
         print("pd_pdo_fix:",pd_pdo_fix)
 
         pd_pdo_pps = c.pd_pdo_pps_get()
         print("pd_pdo_pps:",pd_pdo_pps)
+
+        pd_pdo_avs = c.pd_pdo_avs_get()
+        print("pd_pdo_avs:",pd_pdo_avs)
 
         pdo_id,pdo_voltage = c.pd_pdo_now()
         print("pdo now: id:",pdo_id,"voltage:",pdo_voltage/1000,"V")
