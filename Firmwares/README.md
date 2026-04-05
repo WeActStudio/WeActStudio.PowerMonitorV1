@@ -8,6 +8,10 @@
 3. PD协议支持EPR Fixed和AVS，可申请28V电压，15V-28V 0.1V步进调压(36V挡位未做测试)
 4. 通讯协议增加EPR AVS PDO数据读取和PD PDO数量读取
 
+**V1.0.0.2**
+1. 修复电流校准小于-1.0mA后不显示负号的问题
+2. 调整电流和功率校准范围，调整为±1.5mA,±15mW
+
 # 怎样升级
 1. 解压WeActStudio_Upgrade_Tool.zip
 2. 运行WeActStudio_Upgrade_Tool.exe
@@ -25,6 +29,10 @@
 2. Add the function of automatic screen sleep(Dis Auto Off). The screen will automatically turn off after 10 seconds of no operation. Press any key or set the communication settings to PD PDO to display the screen.
 3. The PD protocol supports EPR Fixed and AVS. A 28V voltage can be applied. The voltage range is 15V - 28V with a 0.1V step adjustment (the 36V gear has not been tested).
 4. Communication protocol increases EPR AVS PDO data reading and PD PDO number reading.
+
+**V1.0.0.2**
+1. Fix the issue where the negative sign is not displayed for current calibration less than -1.0mA.
+2. Adjust the current and power calibration ranges to ±1.5mA, ±15mW.
 
 # How to Upgrade
 1. Extract WeActStudio_Upgrade_Tool.zip
