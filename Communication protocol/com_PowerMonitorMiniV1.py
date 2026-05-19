@@ -25,6 +25,8 @@ class Command(IntEnum):
     CMD_SYSTEM_FACTORY_RESET = 0x45
     CMD_SYSTEM_LCD_PANEL_TYPE = 0x46
     CMD_SYSTEM_CURRENT_RSHUNT = 0x47
+    CMD_SYSTEM_CURRENT_OFFSET = 0x48
+    CMD_SYSTEM_INA226_CONFIG = 0x49
     CMD_END = 0x0A
     CMD_READ = 0x80
 
@@ -46,6 +48,8 @@ class Command(IntEnum):
             Command.CMD_SYSTEM_CURRENT_RSHUNT: 3,
             Command.CMD_SYSTEM_VERSION: 0,
             Command.CMD_SYSTEM_SERIAL_NUM: 0,
+            Command.CMD_SYSTEM_CURRENT_OFFSET: 22,
+            Command.CMD_SYSTEM_INA226_CONFIG: 5,
         }.get(self, 0)
     
 LCD_PANEL_TYPE = {
@@ -58,6 +62,7 @@ INPUT_TYPE = {
     1: "PD",
     2: "QC",
     3: "DC",
+    4: "Initialization",
 }
 
 class com_PowerMonitorMiniV1:
@@ -190,15 +195,19 @@ class com_PowerMonitorMiniV1:
                 print(f"发送指令时出错 Error sending command: {e}")
                 pass
     
-    def send_command(self, cmd):
+    def send_command(self, cmd, wait=False):
         """
         发送指令到设备
         Send a command to the device
         """
+        self._write_ok_event.clear()
         try:
             self._send_queue.put(cmd, timeout=0.5)
         except Full:
             print("发送指令队列已满，指令丢弃 Command queue is full, command discarded")
+        if wait and not self._write_ok_event.wait(timeout=1.0):  # 等待1秒超时
+            print("等待响应超时 Timeout waiting for send command")
+            raise ValueError("Timeout waiting for send command")
 
     def who_am_i(self):
         s = bytearray()
@@ -265,8 +274,7 @@ class com_PowerMonitorMiniV1:
         else:
             s.append(Command.CMD_END)
 
-        self._write_ok_event.clear()
-        self.send_command(s)
+        self.send_command(s, True)
 
     def current_rshunt_get(self):
         s = bytearray()
@@ -300,8 +308,176 @@ class com_PowerMonitorMiniV1:
         else:
             s.append(Command.CMD_END)
 
-        self._write_ok_event.clear()
+        self.send_command(s, True)
+
+    def current_offset_get(self):
+        """
+        获取电流偏移
+        Get current offset
+        offset0: {"display": int, "actual": int}
+        offset1: {"display": int, "actual": int}
+        zero_offset: int
+        """
+        s = bytearray()
+        s.append(Command.CMD_SYSTEM_CURRENT_OFFSET | Command.CMD_READ)
+        
+        # Add CRC if enabled
+        if self._use_crc8:
+            crc = self.calculate_crc8(s)
+            s.append(crc)
+        else:
+            s.append(Command.CMD_END)
+
+        self._read_ok_event.clear()
         self.send_command(s)
+        if not self._read_ok_event.wait(timeout=1.0):  # 等待1秒超时
+            print("等待响应超时 Timeout waiting for response")
+            return None
+
+        value = struct.unpack("<iiiii", self._read_result)
+        offset0 = {"display": value[0], "actual": value[1]}
+        offset1 = {"display": value[2], "actual": value[3]}
+        zero_offset = int(value[4])
+        return offset0,offset1,zero_offset
+    
+    def current_offset_set(self, offset0_display, offset0_actual, offset1_display, offset1_actual, zero_offset):
+        """
+        设置电流偏移，offset1必须大于offset0，且为同为正数或负数
+        Set current offset, offset0 must be greater than offset1, and must be the same sign
+        offset0_display: ±1000000, unit: 0.1mA
+        offset0_actual: ±1000000, unit: 0.1mA
+        offset1_display: ±1000000, unit: 0.1mA
+        offset1_actual: ±1000000, unit: 0.1mA
+        zero_offset: ±15, unit: 0.1mA
+        """
+        if offset0_display < -1000000 or offset0_display > 1000000:
+            raise ValueError("offset0_display must be between -1000000 and 1000000")
+        if offset0_actual < -1000000 or offset0_actual > 1000000:
+            raise ValueError("offset0_actual must be between -1000000 and 1000000")
+        if offset1_display < -1000000 or offset1_display > 1000000:
+            raise ValueError("offset1_display must be between -1000000 and 1000000")
+        if offset1_actual < -1000000 or offset1_actual > 1000000:
+            raise ValueError("offset1_actual must be between -1000000 and 1000000")
+        if zero_offset < -15 or zero_offset > 15:
+            raise ValueError("zero_offset must be between -15 and 15")
+        
+        s = bytearray()
+        s.append(Command.CMD_SYSTEM_CURRENT_OFFSET)
+        data = struct.pack("<iiiii", offset0_display, offset0_actual, offset1_display, offset1_actual, zero_offset)
+        s += data
+
+        # Add CRC if enabled
+        if self._use_crc8:
+            crc = self.calculate_crc8(s)
+            s.append(crc)
+        else:
+            s.append(Command.CMD_END)
+
+        self.send_command(s, True)
+
+    def ina226_config_get(self):
+        """
+        获取INA226配置
+        Get INA226 configuration
+        "currentLSB": unit: 0.1mA
+        """
+        s = bytearray()
+        s.append(Command.CMD_SYSTEM_INA226_CONFIG | Command.CMD_READ)
+
+        # Add CRC if enabled
+        if self._use_crc8:
+            crc = self.calculate_crc8(s)
+            s.append(crc)
+        else:
+            s.append(Command.CMD_END)
+
+        self._read_ok_event.clear()
+        self.send_command(s)
+        if not self._read_ok_event.wait(timeout=1.0):  # 等待1秒超时
+            print("等待响应超时 Timeout waiting for response")
+            return None
+        
+        currentLSB, config_reg = struct.unpack("<BH", self._read_result)
+
+        vshct   = (config_reg >> 3)  & 0x07   # bit3-5
+        vbusct  = (config_reg >> 6)  & 0x07   # bit6-8
+        avg     = (config_reg >> 9)  & 0x07   # bit9-11
+
+        return {
+            "currentLSB": currentLSB,
+            "reg_value": config_reg,
+            "reg":{
+                "vshct": vshct,
+                "vbusct": vbusct,
+                "avg": avg,
+            }
+        }
+    
+    def ina226_config_set(self,currentLSB=3,vshct=3,vbusct=3,avg=5):
+        """
+        设置INA226配置
+        Set INA226 configuration
+        currentLSB: 1-10, unit: 0.1mA
+        vshct: 0-7
+        vbusct: 0-7
+        avg: 0-7
+        """
+        if currentLSB < 1 or currentLSB > 10:
+            raise ValueError("currentLSB must be between 1 and 10")
+        if vshct < 0 or vshct > 7:
+            raise ValueError("vshct must be between 0 and 7")
+        if vbusct < 0 or vbusct > 7:
+            raise ValueError("vbusct must be between 0 and 7")
+        if avg < 0 or avg > 7:
+            raise ValueError("avg must be between 0 and 7")
+        s = bytearray()
+        s.append(Command.CMD_SYSTEM_INA226_CONFIG)
+        data = struct.pack("<BH", currentLSB, (0 << 0) | (vshct << 3) | (vbusct << 6) | (avg << 9) | (4 << 12) | 0)
+        s += data
+
+        # Add CRC if enabled
+        if self._use_crc8:
+            crc = self.calculate_crc8(s)
+            s.append(crc)
+        else:
+            s.append(Command.CMD_END)
+
+        self.send_command(s, True)
+
+    ina226_vbusct_vshct_str = [
+        "140uS",
+        "204uS",
+        "332uS",
+        "588uS",
+        "1.1ms",
+        "2.116ms",
+        "4.156ms",
+        "8.244ms",
+    ]
+
+    ina226_avg_value = [
+        1, 4, 16, 64, 128, 256, 512, 1024
+    ]
+
+    def ina226_vbusct_vshct_str_get(self,value):
+        return self.ina226_vbusct_vshct_str[value]
+    
+    def ina226_vbusct_vshct_value_get(self,vbusct_str):
+        return self.ina226_vbusct_vshct_str.index(vbusct_str)
+    
+    def ina226_avg_get(self,avg):
+        return self.ina226_avg_value[avg]
+    
+    def ina226_avg_value_get(self,avg_str):
+        return self.ina226_avg_value.index(avg_str)
+    
+    def ina226_currentLSB_str_get(self,value):
+        return f"{value*0.1:.1f}mA"
+    
+    def ina226_currentLSB_value_get(self, currentLSB_str):
+        num_str = currentLSB_str.replace("mA", "")
+        value = float(num_str)
+        return int(value / 0.1)
 
     def lcd_panel_get(self):
         s = bytearray()
@@ -322,6 +498,11 @@ class com_PowerMonitorMiniV1:
         return int(self._read_result[0])
     
     def output_data(self):
+        """
+        获取当前输出数据
+        Get current output data
+        unit: mV, 0.1mA, mW
+        """
         s = bytearray()
         s.append(Command.CMD_OUTPUT_DATA | Command.CMD_READ)
         
@@ -338,10 +519,15 @@ class com_PowerMonitorMiniV1:
             print("等待响应超时 Timeout waiting for response")
             return None
         
-        voltage,current,power = struct.unpack("IiI", self._read_result)
+        voltage,current,power = struct.unpack("<IiI", self._read_result)
         return voltage,current,power
     
     def output_data_max(self):
+        """
+        获取最大输出数据
+        Get maximum output data
+        unit: mV, 0.1mA, mW
+        """
         s = bytearray()
         s.append(Command.CMD_OUTPUT_DATA_MAX | Command.CMD_READ)
         
@@ -358,7 +544,7 @@ class com_PowerMonitorMiniV1:
             print("等待响应超时 Timeout waiting for response")
             return None
         
-        voltage,current,power = struct.unpack("IiI", self._read_result)
+        voltage,current,power = struct.unpack("<IiI", self._read_result)
         return voltage,current,power
     
     def maH_mwH(self):
@@ -378,10 +564,15 @@ class com_PowerMonitorMiniV1:
             print("等待响应超时 Timeout waiting for response")
             return None
         
-        maH,mwH = struct.unpack("II", self._read_result)
+        maH,mwH = struct.unpack("<II", self._read_result)
         return maH,mwH
     
     def uptime(self):
+        """
+        获取运行时间
+        Get uptime
+        unit: seconds
+        """
         s = bytearray()
         s.append(Command.CMD_UPTIME | Command.CMD_READ)
         
@@ -397,7 +588,7 @@ class com_PowerMonitorMiniV1:
         if not self._read_ok_event.wait(timeout=1.0):  # 等待1秒超时
             print("等待响应超时 Timeout waiting for response")
             return None
-        uptime = struct.unpack("I", self._read_result)[0]
+        uptime = struct.unpack("<I", self._read_result)[0]
         return uptime
     
     def output_data_max_reset(self):
@@ -411,8 +602,7 @@ class com_PowerMonitorMiniV1:
         else:
             s.append(Command.CMD_END)
 
-        self._write_ok_event.clear()
-        self.send_command(s)
+        self.send_command(s, True)
 
     def input_type_get(self):
         s = bytearray()
@@ -443,11 +633,12 @@ class com_PowerMonitorMiniV1:
             Example:
             {
                 "count": 2,
-                "fixdata": [
+                "fixeddata": [
                     {"voltage": 5000, "current": 3000},
                     {"voltage": 9000, "current": 2000}
                 ]
             }
+        unit: mV, mA
         """
         s = bytearray()
         s.append(Command.CMD_PD_PDO_FIX | Command.CMD_READ)
@@ -471,7 +662,7 @@ class com_PowerMonitorMiniV1:
             return None
         
         # 解析数据
-        result = {"count": 0, "fixdata": []}
+        result = {"count": 0, "fixeddata": []}
         
         result["count"] = len(self._read_result)//4
 
@@ -483,12 +674,12 @@ class com_PowerMonitorMiniV1:
             offset = i*4
             
             # 解析电压 (mV)
-            voltage = struct.unpack("H", self._read_result[offset:offset+2])[0]
+            voltage = struct.unpack("<H", self._read_result[offset:offset+2])[0]
             
             # 解析电流 (mA)
-            current = struct.unpack("H", self._read_result[offset+2:offset+4])[0]
+            current = struct.unpack("<H", self._read_result[offset+2:offset+4])[0]
             
-            result["fixdata"].append({
+            result["fixeddata"].append({
                 "voltage": voltage,
                 "current": current
             })
@@ -510,6 +701,7 @@ class com_PowerMonitorMiniV1:
                     {"minvoltage": 9000, "maxvoltage": 15000, "maxcurrent": 2000}
                 ]
             }
+        unit: mV, mA
         """
         s = bytearray()
         s.append(Command.CMD_PD_PDO_PPS | Command.CMD_READ)
@@ -546,11 +738,11 @@ class com_PowerMonitorMiniV1:
             offset = i*6
             
             # 解析电压 (mV)
-            minvoltage = struct.unpack("H", self._read_result[offset:offset+2])[0]
-            maxvoltage = struct.unpack("H", self._read_result[offset+2:offset+4])[0]
+            minvoltage = struct.unpack("<H", self._read_result[offset:offset+2])[0]
+            maxvoltage = struct.unpack("<H", self._read_result[offset+2:offset+4])[0]
             
             # 解析电流 (mA)
-            maxcurrent = struct.unpack("H", self._read_result[offset+4:offset+6])[0]
+            maxcurrent = struct.unpack("<H", self._read_result[offset+4:offset+6])[0]
             
             result["ppsdata"].append({
                 "minvoltage": minvoltage,
@@ -575,6 +767,7 @@ class com_PowerMonitorMiniV1:
                     {"minvoltage": 15000, "maxvoltage": 36000, "maxpower": 240}
                 ]
             }
+        unit: mV, W
         """
         s = bytearray()
         s.append(Command.CMD_PD_PDO_AVS | Command.CMD_READ)
@@ -611,11 +804,11 @@ class com_PowerMonitorMiniV1:
             offset = i*6
             
             # 解析电压 (mV)
-            minvoltage = struct.unpack("H", self._read_result[offset:offset+2])[0]
-            maxvoltage = struct.unpack("H", self._read_result[offset+2:offset+4])[0]
+            minvoltage = struct.unpack("<H", self._read_result[offset:offset+2])[0]
+            maxvoltage = struct.unpack("<H", self._read_result[offset+2:offset+4])[0]
             
             # 解析功率 (W)
-            maxpower = struct.unpack("H", self._read_result[offset+4:offset+6])[0]
+            maxpower = struct.unpack("<H", self._read_result[offset+4:offset+6])[0]
             
             result["avsdata"].append({
                 "minvoltage": minvoltage,
@@ -661,6 +854,8 @@ class com_PowerMonitorMiniV1:
         """
         获取当前PDO数据
         Get current PDO data
+        id: 1-11
+        voltage unit: mV
         """
         s = bytearray()
         s.append(Command.CMD_PD_PDO | Command.CMD_READ)
@@ -685,7 +880,7 @@ class com_PowerMonitorMiniV1:
         
 
         id = int(self._read_result[0])
-        voltage = struct.unpack("H", self._read_result[1:3])[0]
+        voltage = struct.unpack("<H", self._read_result[1:3])[0]
         
         return id, voltage
     
@@ -693,6 +888,8 @@ class com_PowerMonitorMiniV1:
         """
         设置PDO数据
         Set PDO data
+        id: 1-11
+        voltage unit: mV
         """
         s = bytearray()
         s.append(Command.CMD_PD_PDO)
@@ -706,8 +903,7 @@ class com_PowerMonitorMiniV1:
         else:
             s.append(Command.CMD_END)
         
-        self._read_ok_event.clear()
-        self.send_command(s)
+        self.send_command(s, True)
 
     def close(self):
         """
@@ -796,25 +992,44 @@ if __name__ == "__main__":
         fixed_num, pps_num, avs_num = c.pd_pdo_num()
         print("fixed_num:",fixed_num,"pps_num:",pps_num,"avs_num:",avs_num)
 
-        pd_pdo_fix = c.pd_pdo_fix_get()
-        print("pd_pdo_fix:",pd_pdo_fix)
+        if fixed_num:
+            pd_pdo_fix = c.pd_pdo_fix_get()
+            print("pd_pdo_fix:",pd_pdo_fix)
 
-        pd_pdo_pps = c.pd_pdo_pps_get()
-        print("pd_pdo_pps:",pd_pdo_pps)
+        if pps_num:
+            pd_pdo_pps = c.pd_pdo_pps_get()
+            print("pd_pdo_pps:",pd_pdo_pps)
 
-        pd_pdo_avs = c.pd_pdo_avs_get()
-        print("pd_pdo_avs:",pd_pdo_avs)
+        if avs_num:
+            pd_pdo_avs = c.pd_pdo_avs_get()
+            print("pd_pdo_avs:",pd_pdo_avs)
 
         pdo_id,pdo_voltage = c.pd_pdo_now()
         print("pdo now: id:",pdo_id,"voltage:",pdo_voltage/1000,"V")
 
-        c.pd_pdo_set(2, pd_pdo_fix['fixdata'][1]['voltage'])
-        print("pd_pdo_set: id:",2,"voltage:",pd_pdo_fix['fixdata'][1]['voltage']/1000,"V")
+        # c.pd_pdo_set(2, pd_pdo_fix['fixeddata'][1]['voltage'])
+        # print("pd_pdo_set: id:",2,"voltage:",pd_pdo_fix['fixeddata'][1]['voltage']/1000,"V")
         
         time.sleep(0.1)
 
         pdo_id,pdo_voltage = c.pd_pdo_now()
         print("pdo now: id:",pdo_id,"voltage:",pdo_voltage/1000,"V")
+
+    current_offset0,current_offset1,current_zero = c.current_offset_get()
+    print("offset0 display:",current_offset0["display"]/10000,"A","actual:",current_offset0["actual"]/10000,"A")
+    print("offset1 display:",current_offset1["display"]/10000,"A","actual:",current_offset1["actual"]/10000,"A")
+    print("zero :",current_zero/10000,"A")
+    
+    # c.current_offset_set(5110,5073,10155,10080,0)
+
+    ina226_config = c.ina226_config_get()
+    print("ina226_config:",ina226_config)
+    print("ina226_currentLSB_str:",c.ina226_currentLSB_str_get(ina226_config["currentLSB"]))
+    print("ina226_reg_vshct:",c.ina226_vbusct_vshct_str_get(ina226_config["reg"]["vshct"]))
+    print("ina226_reg_vbusct:",c.ina226_vbusct_vshct_str_get(ina226_config["reg"]["vbusct"]))
+    print("ina226_reg_avg:",c.ina226_avg_get(ina226_config["reg"]["avg"]))
+
+    # c.ina226_config_set(currentLSB=2,vbusct=2,avg=4,vshct=4)
 
     #c.output_data_max_reset()
     
@@ -824,5 +1039,6 @@ if __name__ == "__main__":
 
     # c.factory_reset()
     
+    time.sleep(1)
     c.close()
     time.sleep(1)

@@ -12,6 +12,12 @@
 1. 修复电流校准小于-1.0mA后不显示负号的问题
 2. 调整电流和功率校准范围，调整为±1.5mA,±15mW
 
+**V1.0.0.3**
+1. 增加电流2点校准功能，校准后误差小于±1%（需要使用上位机进行校准）
+2. 调整CurrentLSB默认值，由0.1mA调整为0.3mA
+3. INA226参数支持通讯配置
+4. 优化串口通讯性能
+
 # 怎样升级
 1. 解压WeActStudio_Upgrade_Tool.zip
 2. 运行WeActStudio_Upgrade_Tool.exe
@@ -33,6 +39,12 @@
 **V1.0.0.2**
 1. Fix the issue where the negative sign is not displayed for current calibration less than -1.0mA.
 2. Adjust the current and power calibration ranges to ±1.5mA, ±15mW.
+
+**V1.0.0.3**
+1. Added two-point current calibration function, calibration error within ±1% (calibration via upper computer required)
+2. Default CurrentLSB adjusted from 0.1mA to 0.3mA
+3. Support communication configuration for INA226 parameters
+4. Optimize serial port communication performance
 
 # How to Upgrade
 1. Extract WeActStudio_Upgrade_Tool.zip

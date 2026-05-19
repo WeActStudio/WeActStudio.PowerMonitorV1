@@ -2,7 +2,13 @@
 # WeActStudio.PowerMonitorV1
 ![display](Images/en/1.png)
 ## Error Table
+> Un-calibrated error table
+
 ![display](Images/error.png)
+
+> Calibrated error table
+
+![display](Images/error_after_calibration.png)
 ## Product Introduction
 ![display](Images/en/u1.png)
 ![display](Images/en/u2.png)

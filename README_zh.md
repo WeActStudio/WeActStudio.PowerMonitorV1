@@ -2,7 +2,13 @@
 # WeActStudio.PowerMonitorV1
 ![display](Images/zh/1.png)
 ## 误差表
+> 未校准误差表
+
 ![display](Images/error.png)
+
+> 校准后的误差表
+
+![display](Images/error_after_calibration.png)
 ## 使用说明
 ![display](Images/zh/u1.png)
 ![display](Images/zh/u2.png)
