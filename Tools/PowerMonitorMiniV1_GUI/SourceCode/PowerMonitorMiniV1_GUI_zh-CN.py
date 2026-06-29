@@ -9,7 +9,7 @@ import traceback
 import time
 import queue
 
-from com_PowerMonitorMiniV1 import com_PowerMonitorMiniV1, INPUT_TYPE
+from com_PowerMonitorMiniV1 import com_PowerMonitorMiniV1, INPUT_TYPE, ver_gt
 
 import sys
 import os
@@ -31,12 +31,13 @@ class PowerMonitorMiniV1_GUI:
         self.ser = serial.Serial()
         self.thread_status = 0
         self.com_task_step = 0
+        self.support_current_set = False
 
         self.queue_device_send = queue.Queue()
         self.queue_device_recv = queue.Queue()
 
         self.maintk = tk.Tk()
-        self.maintk.title("WeAct Studio Power Monitor Mini V1 GUI")
+        self.maintk.title("WeAct Studio Power Monitor Mini V1 GUI (v1.0.1.0)")
         self.maintk.iconbitmap(resource_path("logo.ico"))
         self.maintk.geometry("800x770")
         self.maintk.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -316,10 +317,13 @@ class PowerMonitorMiniV1_GUI:
         self.tree_pd.column("Max Current", width=110, anchor="center", stretch=False)
         self.tree_pd.column("Max Power", width=100, anchor="center", stretch=False)
         self.tree_pd.grid(row=1, column=0, columnspan=8, sticky=tk.N + tk.W + tk.E)
-        self.label_pd_id_set = tk.Label(self.frame_pd, text="ID设置")
+        self.frame_pd_set = ttk.Frame(self.frame_pd)
+        self.frame_pd_set.grid(row=2, column=0, columnspan=5, sticky=tk.N + tk.W + tk.E)
+
+        self.label_pd_id_set = tk.Label(self.frame_pd_set, text="ID设置")
         self.label_pd_id_set.grid(row=2, column=0, sticky=tk.W)
         self.combobox_pd_id_set = ttk.Combobox(
-            self.frame_pd,
+            self.frame_pd_set,
             values=["0", "1", "2", "3", "4", "5", "6", "7"],
             state="readonly",
             width=10,
@@ -328,26 +332,37 @@ class PowerMonitorMiniV1_GUI:
         self.combobox_pd_id_set.bind(
             "<<ComboboxSelected>>", self.combobox_pd_id_set_click
         )
-        self.label_pd_voltage_set = tk.Label(self.frame_pd, text="电压设置(mV)")
+        self.label_pd_voltage_set = tk.Label(self.frame_pd_set, text="电压设置(mV)")
         self.label_pd_voltage_set.grid(row=2, column=1, sticky=tk.W)
         self.combobox_pd_voltage_set = ttk.Combobox(
-            self.frame_pd,
+            self.frame_pd_set,
             values="",
             width=10,
             validate="key",
             validatecommand=(self.maintk.register(self.only_digit), "%S"),
         )
         self.combobox_pd_voltage_set.grid(row=3, column=1, sticky=tk.W, padx=1)
+        self.label_pd_current_set = tk.Label(self.frame_pd_set, text="限流设置(mA)")
+        self.label_pd_current_set.grid(row=2, column=2, sticky=tk.W)
+        self.combobox_pd_current_set = ttk.Combobox(
+            self.frame_pd_set,
+            values="",
+            width=10,
+            validate="key",
+            validatecommand=(self.maintk.register(self.only_digit), "%S"),
+        )
+        self.combobox_pd_current_set.grid(row=3, column=2, sticky=tk.W, padx=1)
         self.btn_pd_refresh = ttk.Button(
-            self.frame_pd, text="读取", command=self.btn_pd_refresh_click
+            self.frame_pd_set, text="读取", command=self.btn_pd_refresh_click
         )
-        self.btn_pd_refresh.grid(row=3, column=2, sticky=tk.W, padx=1)
+        self.btn_pd_refresh.grid(row=3, column=3, sticky=tk.W, padx=1)
         self.btn_pd_apply = ttk.Button(
-            self.frame_pd, text="应用", command=self.btn_pd_apply_click
+            self.frame_pd_set, text="应用", command=self.btn_pd_apply_click
         )
-        self.btn_pd_apply.grid(row=3, column=3, sticky=tk.W, padx=1)
+        self.btn_pd_apply.grid(row=3, column=4, sticky=tk.W, padx=1)
         self.combobox_pd_id_set["state"] = "disabled"
         self.combobox_pd_voltage_set["state"] = "disabled"
+        self.combobox_pd_current_set["state"] = "disabled"
         self.btn_pd_refresh["state"] = "disabled"
         self.btn_pd_apply["state"] = "disabled"
 
@@ -657,17 +672,26 @@ class PowerMonitorMiniV1_GUI:
         if self.thread_status == 1:
             pdo_id = self.combobox_pd_id_set.current() + 1
             pdo_voltage = int(self.combobox_pd_voltage_set.get())
-            self.queue_device_recv.put(("pd_apply", (pdo_id, pdo_voltage)))
+            pdo_current = int(self.combobox_pd_current_set.get())
+            if self.support_current_set:
+                self.queue_device_recv.put(("pd_apply2", (pdo_id, pdo_voltage, pdo_current)))
+            else:
+                self.queue_device_recv.put(("pd_apply", (pdo_id, pdo_voltage)))
         pass
 
-    def combobox_pd_id_set_click(self, event=None, pdo_voltage=None):
+    def combobox_pd_id_set_click(self, event=None, pdo_voltage=None, pdo_current=None):
         children = self.tree_pd.get_children()
         row = self.tree_pd.item(children[self.combobox_pd_id_set.current()])["values"]
         self.combobox_pd_voltage_set.config(validate="none")
+        self.combobox_pd_current_set.config(validate="none")
         if row[1] == "fixed":
             self.combobox_pd_voltage_set.set(row[3])
             self.combobox_pd_voltage_set["state"] = "disabled"
             self.combobox_pd_voltage_set.unbind("<KeyRelease>")
+
+            self.combobox_pd_current_set.set(row[4])
+            self.combobox_pd_current_set["state"] = "disabled"
+            self.combobox_pd_current_set.unbind("<KeyRelease>")
         else:
             if row[1] == "pps":
                 combobox_values = [f"{i:d}" for i in range(row[2], row[3] + 20, 20)]
@@ -680,7 +704,25 @@ class PowerMonitorMiniV1_GUI:
             else:
                 self.combobox_pd_voltage_set.current(0)
             self.combobox_pd_voltage_set["state"] = "readonly"
+
+            if self.support_current_set:
+                if row[1] == "pps":
+                    combobox_values = [f"{i:d}" for i in range(50, row[4] + 50, 50)]
+                else:
+                    combobox_values = [f"{i:d}" for i in range(50, round(row[5]*1000/(row[3]/1000)) + 50, 50)]
+                self.combobox_pd_current_set.config(values=combobox_values)
+                if pdo_current is not None:
+                    current = combobox_values.index(str(pdo_current))
+                    self.combobox_pd_current_set.current(current)
+                else:
+                    self.combobox_pd_current_set.current(len(combobox_values) - 1)
+                self.combobox_pd_current_set["state"] = "readonly"
+            else:
+                self.combobox_pd_current_set.set(row[4])
+                self.combobox_pd_current_set["state"] = "disabled"
+                self.combobox_pd_current_set.unbind("<KeyRelease>")
         self.combobox_pd_voltage_set.config(validate="key")
+        self.combobox_pd_current_set.config(validate="key")
 
     def run_com_task(self):
         if self.com_task_step == 0:
@@ -695,7 +737,6 @@ class PowerMonitorMiniV1_GUI:
             th = threading.Thread(target=self.run_device_task, daemon=True)
             th.start()
             self.com_task_step = 2
-
         else:
             while True:
                 try:
@@ -708,6 +749,10 @@ class PowerMonitorMiniV1_GUI:
                         self.label_device_sn_value.config(text=data[1])
                     elif data[0] == "system_version":
                         self.label_device_soft_version_value.config(text=data[1])
+                        if ver_gt(data[1], "v1.0.0.3"):
+                            self.support_current_set = True
+                        else:
+                            self.support_current_set = False
                     elif data[0] == "rshunt":
                         self.label_device_rshunt_value.config(text=str(data[1]) + "mΩ")
                     elif data[0] == "input_type":
@@ -835,6 +880,13 @@ class PowerMonitorMiniV1_GUI:
                         self.btn_pd_refresh["state"] = "normal"
                         self.btn_pd_apply["state"] = "normal"
                         pass
+                    elif data[0] == "pd_pdo_now2":
+                        self.combobox_pd_id_set.current(data[1][0] - 1)
+                        self.combobox_pd_id_set_click(pdo_voltage=data[1][1], pdo_current=data[1][2])
+                        self.combobox_pd_id_set["state"] = "readonly"
+                        self.btn_pd_refresh["state"] = "normal"
+                        self.btn_pd_apply["state"] = "normal"
+                        pass
 
                 except queue.Empty:
                     break
@@ -925,8 +977,12 @@ class PowerMonitorMiniV1_GUI:
                             ("pd_pdo_tree_add", "avs", pd_pdo_avs)
                         )
                     self.queue_device_send.put(("pd_pdo_tree_over", None))
-                    pdo_id, pdo_voltage = self.device.pd_pdo_now()
-                    self.queue_device_send.put(("pd_pdo_now", (pdo_id, pdo_voltage)))
+                    if self.support_current_set:
+                        pdo_id, pdo_voltage, pdo_current = self.device.pd_pdo_now2()
+                        self.queue_device_send.put(("pd_pdo_now2", (pdo_id, pdo_voltage, pdo_current)))
+                    else:
+                        pdo_id, pdo_voltage = self.device.pd_pdo_now()
+                        self.queue_device_send.put(("pd_pdo_now", (pdo_id, pdo_voltage)))
                 else:
                     self.queue_device_send.put(("frame_pd_remove", None))
 
@@ -994,6 +1050,10 @@ class PowerMonitorMiniV1_GUI:
                 elif data[0] == "pd_apply":
                     pdo_id, pdo_voltage = data[1]
                     self.device.pd_pdo_set(id=pdo_id, voltage=pdo_voltage)
+                    time.sleep(0.01)
+                elif data[0] == "pd_apply2":
+                    pdo_id, pdo_voltage, pdo_current = data[1]
+                    self.device.pd_pdo_set2(id=pdo_id, voltage=pdo_voltage, current=pdo_current)
                     time.sleep(0.01)
 
             except queue.Empty:

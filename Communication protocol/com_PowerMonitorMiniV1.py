@@ -19,6 +19,7 @@ class Command(IntEnum):
     CMD_PD_PDO = 0x0A
     CMD_PD_PDO_AVS = 0x0B
     CMD_PD_PDO_NUM= 0x0C
+    CMD_PD_PDO2 = 0x0D
     CMD_SYSTEM_RESET = 0x40
     CMD_SYSTEM_VERSION = 0x42
     CMD_SYSTEM_SERIAL_NUM = 0x43
@@ -44,6 +45,7 @@ class Command(IntEnum):
             Command.CMD_PD_PDO: 5,
             Command.CMD_PD_PDO_AVS: 0,
             Command.CMD_PD_PDO_NUM: 5,
+            Command.CMD_PD_PDO2: 7,
             Command.CMD_SYSTEM_LCD_PANEL_TYPE: 3,
             Command.CMD_SYSTEM_CURRENT_RSHUNT: 3,
             Command.CMD_SYSTEM_VERSION: 0,
@@ -883,6 +885,40 @@ class com_PowerMonitorMiniV1:
         voltage = struct.unpack("<H", self._read_result[1:3])[0]
         
         return id, voltage
+
+    def pd_pdo_now2(self):
+        """
+        获取当前PDO数据
+        Get current PDO data
+        id: 1-11
+        voltage unit: mV
+        current unit: mA
+        """
+        s = bytearray()
+        s.append(Command.CMD_PD_PDO2 | Command.CMD_READ)
+
+        # Add CRC if enabled
+        if self._use_crc8:
+            crc = self.calculate_crc8(s)
+            s.append(crc)
+        else:
+            s.append(Command.CMD_END)
+
+        self._read_ok_event.clear()
+        self.send_command(s)
+        if not self._read_ok_event.wait(timeout=1.0):  # 等待1秒超时
+            print("等待响应超时 Timeout waiting for response")
+            return None
+        
+        # 确保_read_result有足够的数据
+        if len(self._read_result) != 5:
+            print("PDO数据格式错误: 数据长度不足 PDO data format error: insufficient data length")
+            return None
+
+        id = int(self._read_result[0])
+        voltage, current = struct.unpack("<HH", self._read_result[1:5])
+        
+        return id, voltage, current
     
     def pd_pdo_set(self, id, voltage):
         """
@@ -896,6 +932,30 @@ class com_PowerMonitorMiniV1:
         s.append(id)
         s.append(voltage & 0xFF)
         s.append(voltage >> 8)
+        # Add CRC if enabled
+        if self._use_crc8:
+            crc = self.calculate_crc8(s)
+            s.append(crc)
+        else:
+            s.append(Command.CMD_END)
+        
+        self.send_command(s, True)
+    
+    def pd_pdo_set2(self, id, voltage, current):
+        """
+        设置PDO数据
+        Set PDO data
+        id: 1-11
+        voltage unit: mV
+        current unit: mA
+        """
+        s = bytearray()
+        s.append(Command.CMD_PD_PDO2)
+        s.append(id)
+        s.append(voltage & 0xFF)
+        s.append(voltage >> 8)
+        s.append(current & 0xFF)
+        s.append(current >> 8)
         # Add CRC if enabled
         if self._use_crc8:
             crc = self.calculate_crc8(s)
@@ -947,6 +1007,32 @@ class com_PowerMonitorMiniV1:
         
         return crc
 
+def parse_version(ver_str: str):
+    # 1. 去除v前缀
+    s = ver_str.lstrip("vV")
+    # 2. 切掉下划线后缀
+    s = s.split("_")[0]
+    # 3. 按点分割，转整数列表
+    parts = []
+    for p in s.split("."):
+        if p.isdigit():
+            parts.append(int(p))
+        else:
+            return None
+    return parts
+
+def ver_gt(ver_a: str, ver_b: str) -> bool:
+    """判断Compare ver_a > ver_b"""
+    a = parse_version(ver_a)
+    b = parse_version(ver_b)
+    if a is None or b is None:
+        raise ValueError("版本号格式错误 Version number format error: invalid version number")
+    # 补齐长度，短版本后面补0
+    max_len = max(len(a), len(b))
+    a += [0] * (max_len - len(a))
+    b += [0] * (max_len - len(b))
+    return a > b
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1:
@@ -965,7 +1051,8 @@ if __name__ == "__main__":
     c = com_PowerMonitorMiniV1(port, baudrate=9600, use_crc8=use_crc8)
 
     print("who_am_i:",c.who_am_i())
-    print("system_version:",c.system_version())
+    version = c.system_version()
+    print("system_version:",version)
     print("system_serial_num:",c.system_serial_num())
     print("Current_rshunt:",c.current_rshunt_get(), "ohm")
     print("LCD_panel:",LCD_PANEL_TYPE.get(c.lcd_panel_get(), "Unknown"))
@@ -1003,12 +1090,19 @@ if __name__ == "__main__":
         if avs_num:
             pd_pdo_avs = c.pd_pdo_avs_get()
             print("pd_pdo_avs:",pd_pdo_avs)
+        
 
-        pdo_id,pdo_voltage = c.pd_pdo_now()
-        print("pdo now: id:",pdo_id,"voltage:",pdo_voltage/1000,"V")
+        if ver_gt(version, "v1.0.0.3"):
+            print("pd_pdo_set2")
+            pdo_id,pdo_voltage,current = c.pd_pdo_now2()
+            print("pdo now2: id:",pdo_id,"voltage:",pdo_voltage/1000,"V","current:",current/1000,"A")
+            c.pd_pdo_set2(2, pd_pdo_fix['fixeddata'][1]['voltage'],pd_pdo_fix['fixeddata'][1]['current'])
+        else:
+            pdo_id,pdo_voltage = c.pd_pdo_now()
+            print("pdo now: id:",pdo_id,"voltage:",pdo_voltage/1000,"V")
+            c.pd_pdo_set(2, pd_pdo_fix['fixeddata'][1]['voltage'])
 
-        # c.pd_pdo_set(2, pd_pdo_fix['fixeddata'][1]['voltage'])
-        # print("pd_pdo_set: id:",2,"voltage:",pd_pdo_fix['fixeddata'][1]['voltage']/1000,"V")
+        print("pd_pdo_set: id:",2,"voltage:",pd_pdo_fix['fixeddata'][1]['voltage']/1000,"V")
         
         time.sleep(0.1)
 
