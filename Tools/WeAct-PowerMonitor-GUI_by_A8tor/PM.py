@@ -50,41 +50,38 @@ class SettingsDialog(QtWidgets.QDialog):
 
 	def read_settings(self):
 		# Read LCD panel type
-		resp = self.send_command(0x46, read_len=3)
-		if resp and len(resp) >= 3 and resp[0] == 0xC6:
+		resp = self.send_command(0x46)
+		if resp and resp[0] == 0xC6:
 			val = resp[1]
 			self.lcd_panel_combo.setCurrentIndex(val if val in (0, 1) else 0)
 			self.log(f'Read LCD panel type: {val}')
 
 		# Read Rshunt
-		resp = self.send_command(0x47, read_len=3)
-		if resp and len(resp) >= 3 and resp[0] == 0xC7:
+		resp = self.send_command(0x47)
+		if resp and resp[0] == 0xC7:
 			self.rshunt_spin.setValue(resp[1])
 			self.log(f'Read Rshunt: {resp[1]}')
 
 	def write_settings(self):
 		# Write LCD panel type
 		val = self.lcd_panel_combo.currentIndex()
-		cmd = bytes([0x46, val, 0x0A])
-		self.send_command_raw(cmd)
+		self.send_command_raw(bytes([0x46, val]))
 		self.log(f'Write LCD panel type: {val}')
 
 		# Write Rshunt
 		rshunt = self.rshunt_spin.value()
-		cmd = bytes([0x47, rshunt, 0x0A])
-		self.send_command_raw(cmd)
+		self.send_command_raw(bytes([0x47, rshunt]))
 		self.log(f'Write Rshunt: {rshunt}')
 
 		# Write PD PDO
 		pdo_id = self.pdo_id_spin.value()
 		voltage = self.pdo_voltage_spin.value()
-		cmd = bytes([0x0A, pdo_id, voltage & 0xFF, (voltage >> 8) & 0xFF, 0x0A])
-		self.send_command_raw(cmd)
+		self.send_command_raw(bytes([0x0A, pdo_id, voltage & 0xFF, (voltage >> 8) & 0xFF]))
 		self.log(f'Write PD PDO: id={pdo_id}, voltage={voltage}')
 
-	def send_command_raw(self, cmd_bytes):
+	def send_command_raw(self, payload):
 		if self.send_command:
-			self.send_command(-1, raw=cmd_bytes)
+			self.send_command(-1, raw=payload)
 
 import sys
 import serial
@@ -96,11 +93,23 @@ from PyQt5 import QtGui
 import time
 import collections
 
+USB_VID_PID = 'USB VID:PID=1A86:FE0C SER=B1'
+CMD_END = 0x0A
+READ_LENGTHS = {
+	0x02: 14,
+	0x04: 10,
+	0x05: 6,
+	0x46: 3,
+	0x47: 3,
+}
+
 class PowerMonitorGUI(QtWidgets.QWidget):
 	def __init__(self):
 		super().__init__()
 		self.setWindowTitle('WeAct PowerMonitor (by @A8tor)')
 		self.serial_port = None
+		self.port_hwids = []
+		self.use_crc8 = False
 		self.timer = QtCore.QTimer()
 		self.timer.timeout.connect(self.read_values)
 		self.read_interval_ms = 1
@@ -118,11 +127,12 @@ class PowerMonitorGUI(QtWidgets.QWidget):
 		# --- Верх: настройки компорта ---
 		port_layout = QtWidgets.QHBoxLayout()
 		self.port_combo = QtWidgets.QComboBox()
-		self.refresh_ports()
+		self.port_combo.currentIndexChanged.connect(self.on_port_selected)
 		self.baudrate_combo = QtWidgets.QComboBox()
 		baudrates = ['9600', '19200', '38400', '57600', '115200']
 		self.baudrate_combo.addItems(baudrates)
 		self.baudrate_combo.setCurrentText('115200')
+		self.refresh_ports()
 		self.connect_btn = QtWidgets.QPushButton('Connect')
 		self.connect_btn.clicked.connect(self.toggle_connection)
 		self.refresh_btn = QtWidgets.QPushButton('Refresh')
@@ -219,10 +229,61 @@ class PowerMonitorGUI(QtWidgets.QWidget):
 		self.setLayout(main_layout)
 
 	def refresh_ports(self):
+		current = self.port_combo.currentText()
+		self.port_combo.blockSignals(True)
 		self.port_combo.clear()
-		ports = serial.tools.list_ports.comports()
-		for port in ports:
+		self.port_hwids = []
+		for port in serial.tools.list_ports.comports():
 			self.port_combo.addItem(port.device)
+			self.port_hwids.append(port.hwid or '')
+		idx = self.port_combo.findText(current)
+		if idx >= 0:
+			self.port_combo.setCurrentIndex(idx)
+		self.port_combo.blockSignals(False)
+		self.on_port_selected()
+
+	def on_port_selected(self, index=None):
+		idx = self.port_combo.currentIndex()
+		if idx < 0 or idx >= len(self.port_hwids):
+			return
+		is_usb = USB_VID_PID in self.port_hwids[idx]
+		self.use_crc8 = not is_usb
+		self.baudrate_combo.setEnabled(not is_usb)
+		if is_usb:
+			self.baudrate_combo.setCurrentText('115200')
+		else:
+			self.baudrate_combo.setCurrentText('9600')
+
+	@staticmethod
+	def calculate_crc8(data):
+		crc = 0xFF
+		polynomial = 0x31
+		for byte in data:
+			crc ^= byte
+			for _ in range(8):
+				if crc & 0x80:
+					crc = (crc << 1) ^ polynomial
+				else:
+					crc <<= 1
+				crc &= 0xFF
+		return crc
+
+	def finalize_frame(self, payload):
+		frame = bytearray(payload)
+		if self.use_crc8:
+			frame.append(self.calculate_crc8(frame))
+		else:
+			frame.append(CMD_END)
+		return bytes(frame)
+
+	def validate_response(self, resp, read_len):
+		if not resp or len(resp) < read_len:
+			return None
+		frame = resp[:read_len]
+		if self.use_crc8:
+			if self.calculate_crc8(frame[:-1]) != frame[-1]:
+				return None
+		return frame
 
 	def toggle_connection(self):
 		if self.serial_port and self.serial_port.is_open:
@@ -239,33 +300,44 @@ class PowerMonitorGUI(QtWidgets.QWidget):
 			baudrate = int(self.baudrate_combo.currentText())
 			try:
 				self.serial_port = serial.Serial(port, baudrate, timeout=1)
+				time.sleep(0.1)
 				self.connect_btn.setText('Disconnect')
-				self.log(f'Connected to {port} at {baudrate} baud.')
+				mode = 'USB' if not self.use_crc8 else 'UART'
+				term = 'CRC8' if self.use_crc8 else '0x0A'
+				self.log(f'Connected to {port} at {baudrate} baud ({mode}, {term}).')
 			except Exception as e:
 				self.log(f'Error: {e}')
-    
 
 	def send_command(self, cmd, read_len=0, raw=None):
 		if not self.serial_port or not self.serial_port.is_open:
 			return None
 		if raw is not None:
-			cmd_bytes = raw
+			cmd_bytes = self.finalize_frame(raw)
 		else:
-			cmd_bytes = bytes([cmd | 0x80, 0x0A])
+			cmd_bytes = self.finalize_frame([cmd | 0x80])
+		if read_len == 0 and cmd >= 0:
+			read_len = READ_LENGTHS.get(cmd, 0)
 		self.serial_port.reset_input_buffer()
 		self.serial_port.write(cmd_bytes)
-		# QtCore.QThread.msleep(10)
-		resp = self.serial_port.read_all()
-		if read_len > 0 and len(resp) < read_len:
-			more = self.serial_port.read(read_len - len(resp))
-			resp += more
+		if read_len <= 0:
+			return b''
+		resp = b''
+		deadline = time.time() + 1.0
+		while len(resp) < read_len and time.time() < deadline:
+			chunk = self.serial_port.read(read_len - len(resp))
+			if chunk:
+				resp += chunk
+			else:
+				time.sleep(0.01)
+		frame = self.validate_response(resp, read_len)
 		# Не логировать циклические чтения (0x82, 0x84, 0x85)
 		skip_log = False
-		if raw is None and (cmd | 0x80) in (0x82, 0x84, 0x85):
+		if raw is None and cmd >= 0 and (cmd | 0x80) in (0x82, 0x84, 0x85):
 			skip_log = True
 		if not skip_log:
-			self.log(f'Sent: {cmd_bytes.hex()}  Resp: {resp.hex()}')
-		return resp
+			resp_hex = frame.hex() if frame else (resp.hex() if resp else '')
+			self.log(f'Sent: {cmd_bytes.hex()}  Resp: {resp_hex}')
+		return frame
 
 
 	def read_values(self):
@@ -366,8 +438,8 @@ class PowerMonitorGUI(QtWidgets.QWidget):
 
 	def read_output_data(self):
 		# CMD_OUTPUT_DATA = 0x02, ответ: 0x82 + 12 байт (V, I, P)
-		resp = self.send_command(0x02, read_len=13)
-		if resp and len(resp) >= 13 and resp[0] == 0x82:
+		resp = self.send_command(0x02)
+		if resp and resp[0] == 0x82:
 			voltage = int.from_bytes(resp[1:5], 'little', signed=False)
 			current = int.from_bytes(resp[5:9], 'little', signed=True)
 			power = int.from_bytes(resp[9:13], 'little', signed=True)
@@ -377,8 +449,8 @@ class PowerMonitorGUI(QtWidgets.QWidget):
 
 	def read_mah_mwh(self):
 		# CMD_MAH_MWH = 0x04, ответ: 0x84 + 8 байт (mAh, mWh)
-		resp = self.send_command(0x04, read_len=9)
-		if resp and len(resp) >= 9 and resp[0] == 0x84:
+		resp = self.send_command(0x04)
+		if resp and resp[0] == 0x84:
 			mah = int.from_bytes(resp[1:5], 'little', signed=False)
 			mwh = int.from_bytes(resp[5:9], 'little', signed=False)
 			return mah, mwh
@@ -387,26 +459,23 @@ class PowerMonitorGUI(QtWidgets.QWidget):
 
 	def read_uptime(self):
 		# CMD_UPTIME = 0x05, ответ: 0x85 + 4 байта (uptime)
-		resp = self.send_command(0x05, read_len=5)
-		if resp and len(resp) >= 5 and resp[0] == 0x85:
+		resp = self.send_command(0x05)
+		if resp and resp[0] == 0x85:
 			uptime = int.from_bytes(resp[1:5], 'little', signed=False)
 			return uptime
 		return None
 
 
 	def reset_max(self):
-		resp = self.send_command(0x06)
-		self.log(f'Sent reset max. Response: {resp.hex() if resp else "None"}')
+		self.send_command(-1, raw=bytes([0x06]))
+		self.log('Sent reset max.')
 
 
 	def system_reset(self):
-		resp = self.send_command(0x45)
-		self.log(f'Sent system factory reset. Response: {resp.hex() if resp else "None"}')
+		self.send_command(-1, raw=bytes([0x45]))
+		self.log('Sent system factory reset.')
 	def log(self, text):
 		self.log_text.append(f'{time.strftime("%H:%M:%S")} {text}')
-
-
-	# CRC8 не используется, команды завершаются 0x0A
 
 def main():
 	app = QtWidgets.QApplication(sys.argv)
