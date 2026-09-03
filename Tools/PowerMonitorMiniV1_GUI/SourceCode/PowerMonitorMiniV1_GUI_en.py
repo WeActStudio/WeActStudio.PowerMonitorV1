@@ -38,7 +38,10 @@ class PowerMonitorMiniV1_GUI:
 
         self.maintk = tk.Tk()
         self.maintk.title("WeAct Studio Power Monitor Mini V1 GUI (v1.0.1.0)")
-        self.maintk.iconbitmap(resource_path("logo.ico"))
+        try:
+            self.maintk.iconbitmap(resource_path("logo.ico"))
+        except Exception:
+            pass  # icon file missing or unsupported on this platform (e.g. macOS)
         self.maintk.geometry("800x770")
         self.maintk.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -565,7 +568,7 @@ class PowerMonitorMiniV1_GUI:
         if (
             len(self.comlist[2]) > 0
             and "USB VID:PID=1A86:FE0C SER=B1"
-            in self.comlist[2][self.comportCombobox.current()]
+            in self.comlist[2][self.comportCombobox.current()].upper()
         ):
             self.com_with_crc_check.set(False)
             self.com_with_crc_checkbutton["state"] = "disabled"
