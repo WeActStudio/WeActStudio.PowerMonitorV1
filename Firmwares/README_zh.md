@@ -1,5 +1,32 @@
 [English version](./README.md)  
+# 固件升级方法
+## Windows下怎样升级
+1. 解压WeActStudio_Upgrade_Tool.zip
+2. 运行WeActStudio_Upgrade_Tool.exe
+3. 使用数据线连接设备
+4. 选择fpk固件
+5. 打开串口
+6. 点击发送按钮，开始升级
+
+## Linux、macOS或Windows下怎样升级
+1. 解压WeActStudio_Upgrade_Tool_Python.zip
+2. 使用数据线连接设备
+3. 运行WeActStudio_Upgrade_Tool.py, 需要安装pyserial库  
+示例：python WeActStudio_Upgrade_Tool.py firmware.fpk
+4. 等待升级完成
+
+## 通过浏览器升级，支持Chrome内核的浏览器
+1. 使用数据线连接设备
+2. 打开浏览器，访问 https://tools.weactstudio.com/FirmwareUpdater/
+3. 根据提示操作
+
 # 版本说明
+**V1.0.2.0**
+1. 重构底层代码结构
+2. 采样刷新速率由 100ms 提升至 50ms
+3. 设置界面新增 MFR（厂商）、MOD（型号）显示项，uptime 改为 HH:MM:SS
+4. 修复已知问题
+
 **V1.0.1.0**
 1. PD协议PPS和EPR AVS支持限流设置，配置界面下，长按K2键直至屏幕电流显示变成绿色，为限流设置，再次长按为电压设置；长按K2键直至屏幕显示`W.`后松开，为步长切换  
 **<small>注意：限流效果由电源适配器决定，不同电源适配器的电流限制效果会有差异，例如限流设置为0.5A，实际1A才会触发保护</small>**
@@ -23,18 +50,3 @@
 
 **V1.0.0.0**
 1. 初始版本 Initial version
-
-# Windows下怎样升级
-1. 解压WeActStudio_Upgrade_Tool.zip
-2. 运行WeActStudio_Upgrade_Tool.exe
-3. 使用数据线连接设备
-4. 选择fpk固件
-5. 打开串口
-6. 点击发送按钮，开始升级
-
-# Linux、macOS或Windows下怎样升级
-1. 解压WeActStudio_Upgrade_Tool_Python.zip
-2. 使用数据线连接设备
-3. 运行WeActStudio_Upgrade_Tool.py, 需要安装pyserial库  
-示例：python WeActStudio_Upgrade_Tool.py firmware.fpk
-4. 等待升级完成

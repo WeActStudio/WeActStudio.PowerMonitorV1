@@ -1,5 +1,32 @@
 [中文版本](./README_zh.md)  
+# Firmware Upgrade Method
+## How to Upgrade, Windows
+1. Extract WeActStudio_Upgrade_Tool.zip
+2. Run WeActStudio_Upgrade_Tool.exe
+3. Connect the device using a data cable
+4. Select the fpk firmware
+5. Open the serial port
+6. Click the "Send" button to start the upgrade
+
+## How to Upgrade, Linux , macOS or Windows
+1. Extract WeActStudio_Upgrade_Tool_Python.zip
+2. Connect the device using a data cable
+3. Run WeActStudio_Upgrade_Tool.py, need to install pyserial library  
+Example: python WeActStudio_Upgrade_Tool.py firmware.fpk
+4. Wait for the upgrade to complete.
+
+## How to Upgrade, Chrome-based browser
+1. Connect the device using a data cable
+2. Open the browser and visit https://tools.weactstudio.com/FirmwareUpdater/
+3. Follow the instructions
+
 # Release Notes
+**V1.0.2.0**
+1. Refactor the underlying code structure
+2. Sample refresh rate improved from 100ms to 50ms
+3. Add MFR (manufacturer) and MOD (model) display items in the settings interface, uptime format changed to HH:MM:SS
+4. Fix known issues
+
 **V1.0.1.0**
 1. Both PD PPS and EPR AVS support current limit configuration. On the configuration interface, long-press the K2 key until the current value on the screen turns green to enter current limit setup mode; long-press it again to switch to voltage setup mode.
 Long-press K2 and release after the screen displays `W.` to toggle the adjustment step size.  
@@ -24,18 +51,3 @@ Long-press K2 and release after the screen displays `W.` to toggle the adjustmen
 
 **V1.0.0.0**
 1. Initial version.
-
-# How to Upgrade, Windows
-1. Extract WeActStudio_Upgrade_Tool.zip
-2. Run WeActStudio_Upgrade_Tool.exe
-3. Connect the device using a data cable
-4. Select the fpk firmware
-5. Open the serial port
-6. Click the "Send" button to start the upgrade
-
-# How to Upgrade, Linux , macOS or Windows
-1. Extract WeActStudio_Upgrade_Tool_Python.zip
-2. Connect the device using a data cable
-3. Run WeActStudio_Upgrade_Tool.py, need to install pyserial library  
-Example: python WeActStudio_Upgrade_Tool.py firmware.fpk
-4. Wait for the upgrade to complete.
