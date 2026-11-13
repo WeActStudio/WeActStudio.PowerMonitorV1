@@ -6,7 +6,7 @@
 
 A USB PD/QC trigger + power monitor with a screen. Plug in a charger and it negotiates the voltage for you, then measures voltage, current, power and accumulated energy and shows them on the display. The same data is available over a serial port.
 
-Input and output are the same rail, with a 5 mΩ shunt in between: connect the supply to the input (USB-C or IN), the load to the output (OUT+ or the "Output" hole on top).
+Input and output are the same rail, with a 5 mΩ shunt in between: connect the supply to the input (USB-C or IN), the load to the output (OUT).
 
 | Item | Value |
 | --- | --- |
